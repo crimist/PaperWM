@@ -68,6 +68,15 @@ assert(!scrollController.emit('scroll', 0, -1), 'Scrolling outside edit mode pro
 wheelRow._grabKeyboard = () => {};
 wheelRow._ungrabKeyboard = () => {};
 wheelRow.editing = true;
+scrollController.get_current_event_state = () => Gdk.ModifierType.LOCK_MASK;
+assert(scrollController.emit('scroll', 0, -1), 'Bare scrolling is consumed while editing');
+assert(wheelRow.editing && settings.get_strv('switch-up-workspace').includes('<Super>MouseScrollUp'),
+    'Scrolling without modifiers does not record a binding');
+const modifierController = {
+    get_current_event: () => ({ is_modifier: () => true }),
+};
+wheelRow._onKeyPressed(modifierController, Gdk.KEY_Super_L, 133, 0);
+assert(wheelRow.editing, 'Pressing Super alone keeps the recorder waiting for a wheel step');
 scrollController.get_current_event_state = () => Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.SUPER_MASK | Gdk.ModifierType.LOCK_MASK;
 assert(scrollController.emit('scroll', 0, -1), 'Editing consumes the wheel event');
 flush();
@@ -75,7 +84,24 @@ assert(settings.get_strv('switch-up-workspace').includes('<Control><Super>MouseS
     'Captured wheel shortcut is persisted, excluding Caps Lock');
 assert(settings.get_strv('switch-up-workspace').includes('<Super>Page_Up'), 'Recording preserves the other keyboard shortcut');
 
+wheelRow = up._comboList.get_row_at_index(1);
+wheelRow._grabKeyboard = () => {};
+wheelRow._ungrabKeyboard = () => {};
+wheelRow.editing = true;
+wheelRow._wheelModifiers.forEach(m => m.button.active = false);
+const downButton = wheelRow._wheelControls.get_last_child();
+assert(!downButton.sensitive, 'Direction buttons are disabled without a modifier');
+downButton.emit('clicked');
+assert(wheelRow.editing, 'Direction controls also require a modifier');
+wheelRow._wheelModifiers.find(m => m.button.label === 'Super').button.active = true;
+assert(downButton.sensitive, 'Selecting Super enables direction buttons');
+downButton.emit('clicked');
+flush();
+assert(settings.get_strv('switch-up-workspace').includes('<Super>MouseScrollDown'),
+    'Explicit controls record Super+wheel without Shell capture');
+
 settings.set_strv('switch-down-workspace', ['<Control><Super>MouseScrollUp']);
+settings.set_strv('switch-up-workspace', ['<Super>Page_Up', '<Control><Super>MouseScrollUp']);
 flush();
 assert(pane._model.collisions.get('<Control><Super>MouseScrollUp').size === 2, 'Duplicate wheel bindings are reported');
 wheelRow = up._comboList.get_row_at_index(1);
@@ -88,4 +114,4 @@ assert(settings.get_user_value('switch-up-workspace') === null, 'Reset restores 
 pane._listbox.set_header_func(null);
 pane._listbox.bind_model(null, null);
 flush();
-print('PASS: wheel parsing, editor capture, labels, persistence, collisions, deletion and reset');
+print('PASS: modifier-only input, modifier-required wheel capture, explicit controls, parsing, persistence, collisions, deletion and reset');

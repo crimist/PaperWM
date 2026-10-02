@@ -5,6 +5,7 @@ import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk';
 
 import { AcceleratorParse, MOUSE_SCROLL_UP, MOUSE_SCROLL_DOWN, scrollKeyName } from './acceleratorparse.js';
+import { ScrollCaptureClient } from './scrollcapture.js';
 
 const _ = s => s;
 
@@ -145,7 +146,7 @@ const forbiddenKeyvals = [
 
 function isValidBinding(combo) {
     if (scrollKeyName(combo.keyval))
-        return true;
+        return combo.mods !== 0;
 
     if ((combo.mods === 0 || combo.mods === Gdk.ModifierType.SHIFT_MASK) && combo.keycode !== 0) {
         const keyval = combo.keyval;
@@ -627,6 +628,7 @@ const ComboRow = GObject.registerClass({
         'editPage',
         'shortcutLabel',
         'scrollLabel',
+        'wheelControls',
         'deleteButton',
         'conflictButton',
         'conflictList',
@@ -663,6 +665,7 @@ const ComboRow = GObject.registerClass({
     _init(params = {}) {
         super._init(params);
         this.acceleratorParse = this.keybinding.acceleratorParse;
+        this._scrollCapture = new ScrollCaptureClient();
 
         let controller;
         controller = Gtk.EventControllerKey.new();
@@ -680,10 +683,37 @@ const ComboRow = GObject.registerClass({
 
             const mods = controller.get_current_event_state() & Gtk.accelerator_get_default_mod_mask();
             const keyval = dy < 0 ? MOUSE_SCROLL_UP : MOUSE_SCROLL_DOWN;
-            this._updateKeybinding(new Combo({ keyval, mods }, this.acceleratorParse));
+            this._recordScroll(keyval, mods);
             return Gdk.EVENT_STOP;
         });
         this.add_controller(controller);
+
+        this._wheelModifiers = [
+            ['Super', Gdk.ModifierType.SUPER_MASK],
+            ['Ctrl', Gdk.ModifierType.CONTROL_MASK],
+            ['Alt', Gdk.ModifierType.ALT_MASK],
+            ['Shift', Gdk.ModifierType.SHIFT_MASK],
+        ].map(([label, mask]) => {
+            const button = new Gtk.ToggleButton({ label, active: label === 'Super' });
+            this._wheelControls.append(button);
+            return { button, mask };
+        });
+        const directionButtons = [];
+        for (const [label, keyval] of [['Scroll Up', MOUSE_SCROLL_UP], ['Scroll Down', MOUSE_SCROLL_DOWN]]) {
+            const button = new Gtk.Button({ label });
+            button.connect('clicked', () => {
+                const mods = this._wheelModifiers.reduce((mask, m) => mask | (m.button.active ? m.mask : 0), 0);
+                this._recordScroll(keyval, mods);
+            });
+            this._wheelControls.append(button);
+            directionButtons.push(button);
+        }
+        this._wheelModifiers.forEach(m => m.button.connect('toggled', () => {
+            directionButtons.forEach(button => {
+                button.sensitive = this._wheelModifiers.some(modifier => modifier.button.active);
+            });
+        }));
+        this.connect('unmap', () => this.editing = false);
 
         controller = Gtk.EventControllerFocus.new();
         controller.connect('leave', () => {
@@ -747,9 +777,13 @@ const ComboRow = GObject.registerClass({
 
     _grabKeyboard() {
         this.get_root().get_surface().inhibit_system_shortcuts(null);
+        this._scrollCapture.start((direction, mods) => {
+            this._recordScroll(direction < 0 ? MOUSE_SCROLL_UP : MOUSE_SCROLL_DOWN, mods);
+        });
     }
 
     _ungrabKeyboard() {
+        this._scrollCapture.stop();
         // using optionals here since may have already been ungrabbed
         this.get_root()?.get_surface()?.restore_system_shortcuts();
     }
@@ -792,6 +826,9 @@ const ComboRow = GObject.registerClass({
 
         const event = controller.get_current_event();
         const isModifier = event.is_modifier();
+        // A modifier press starts the gesture; wait for its key or wheel step.
+        if (isModifier)
+            return Gdk.EVENT_STOP;
 
         // Escape cancels
         if (!isModifier && modmask === 0 && keyvalLower === Gdk.KEY_Escape) {
@@ -838,6 +875,14 @@ const ComboRow = GObject.registerClass({
             this.editing = false;
             this.keybinding.replace(oldCombo, newCombo);
         }
+    }
+
+    _recordScroll(keyval, mods) {
+        if (!this.editing)
+            return;
+        mods &= Gtk.accelerator_get_default_mod_mask();
+        if (mods)
+            this._updateKeybinding(new Combo({ keyval, mods }, this.acceleratorParse));
     }
 
     _updateState() {

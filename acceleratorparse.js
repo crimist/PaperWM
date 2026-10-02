@@ -1,6 +1,22 @@
 /**
  * Provides replacement for Gtk.accelerator_parse.
  */
+// Private key values: mouse wheel bindings must never be sent to Mutter as keys.
+export const MOUSE_SCROLL_UP = 0x11000001;
+export const MOUSE_SCROLL_DOWN = 0x11000002;
+
+export function scrollKeyName(keyval) {
+    if (keyval === MOUSE_SCROLL_UP)
+        return 'MouseScrollUp';
+    if (keyval === MOUSE_SCROLL_DOWN)
+        return 'MouseScrollDown';
+    return null;
+}
+
+export function isScrollBinding(keystr) {
+    return /^(?:<[^>]+>)*(?:MouseScrollUp|MouseScrollDown)$/.test(keystr);
+}
+
 export class AcceleratorParse {
     constructor() {
         /**
@@ -99,6 +115,8 @@ export class AcceleratorParse {
             return;
         }
         const map = new Map();
+        map.set('MouseScrollUp', MOUSE_SCROLL_UP);
+        map.set('MouseScrollDown', MOUSE_SCROLL_DOWN);
         map.set('VoidSymbol', 0xffffff);
         map.set('BackSpace', 0xff08);
         map.set('Tab', 0xff09);

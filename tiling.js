@@ -1212,6 +1212,9 @@ export class Space extends Array {
 
             let newMonitor = Main.layoutManager.monitors[i];
             space = spaces.monitors.get(newMonitor);
+            // This action selects a window; an empty monitor has no target.
+            if (!space?.length)
+                return;
             if (dir === Meta.DisplayDirection.LEFT) {
                 index = space.length - 1;
             } else {
@@ -1245,6 +1248,8 @@ export class Space extends Array {
 
             let newMonitor = Main.layoutManager.monitors[i];
             space = spaces.monitors.get(newMonitor);
+            if (!space?.length)
+                return;
             if (space.length <= index)
                 index = space.length - 1;
             if (dir === Meta.DisplayDirection.UP) {
@@ -3563,6 +3568,13 @@ export function registerWindow(metaWindow) {
                 period_ms: 100,
                 count: 10,
                 callback: () => {
+                    // Workspace changes can queue this retry immediately before
+                    // a window closes. Resizing an unmanaged Wayland window can
+                    // segfault Mutter, even if JS still holds its Meta.Window.
+                    if (!metaWindow.get_compositor_private() ||
+                        !isTiled(metaWindow) || !spaces.spaceOfWindow(metaWindow)) {
+                        return false;
+                    }
                     const f = metaWindow.get_frame_rect();
                     if (metaWindow._targetHeight !== f.height) {
                         if (!isNaN(metaWindow._targetHeight)) {

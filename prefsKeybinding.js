@@ -4,7 +4,7 @@ import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk';
 
-import { AcceleratorParse } from './acceleratorparse.js';
+import { AcceleratorParse, MOUSE_SCROLL_UP, MOUSE_SCROLL_DOWN, scrollKeyName } from './acceleratorparse.js';
 
 const _ = s => s;
 
@@ -144,6 +144,9 @@ const forbiddenKeyvals = [
 ];
 
 function isValidBinding(combo) {
+    if (scrollKeyName(combo.keyval))
+        return true;
+
     if ((combo.mods === 0 || combo.mods === Gdk.ModifierType.SHIFT_MASK) && combo.keycode !== 0) {
         const keyval = combo.keyval;
         if ((keyval >= Gdk.KEY_a && keyval <= Gdk.KEY_z) ||
@@ -241,7 +244,7 @@ const Combo = GObject.registerClass({
     }
 
     get keycode() {
-        if (this.disabled) {
+        if (this.disabled || scrollKeyName(this.keyval)) {
             return 0;
         } else if (!this._keycode) {
             let [ok, key, mask] = this.acceleratorParse.accelerator_parse(this.keystr);
@@ -259,6 +262,8 @@ const Combo = GObject.registerClass({
     get keystr() {
         if (this.disabled)
             return '';
+        else if (scrollKeyName(this.keyval))
+            return Gtk.accelerator_name(0, this.mods) + scrollKeyName(this.keyval);
         else
             return Gtk.accelerator_name(this.keyval, this.mods);
     }
@@ -266,6 +271,11 @@ const Combo = GObject.registerClass({
     get label() {
         if (this.disabled)
             return _('Disabled');
+        else if (scrollKeyName(this.keyval)) {
+            const modifiers = Gtk.accelerator_get_label(0, this.mods);
+            const direction = this.keyval === MOUSE_SCROLL_UP ? _('Scroll Up') : _('Scroll Down');
+            return modifiers ? `${modifiers}+${direction}` : direction;
+        }
         else
             return Gtk.accelerator_get_label(this.keyval, this.mods);
     }
@@ -616,6 +626,7 @@ const ComboRow = GObject.registerClass({
         'placeholderPage',
         'editPage',
         'shortcutLabel',
+        'scrollLabel',
         'deleteButton',
         'conflictButton',
         'conflictList',
@@ -651,11 +662,26 @@ const ComboRow = GObject.registerClass({
 }, class ComboRow extends Gtk.ListBoxRow {
     _init(params = {}) {
         super._init(params);
+        this.acceleratorParse = this.keybinding.acceleratorParse;
 
         let controller;
         controller = Gtk.EventControllerKey.new();
         controller.connect('key-pressed', (controller, keyval, keycode, state) => {
-            this._onKeyPressed(controller, keyval, keycode, state);
+            return this._onKeyPressed(controller, keyval, keycode, state);
+        });
+        this.add_controller(controller);
+
+        controller = Gtk.EventControllerScroll.new(
+            Gtk.EventControllerScrollFlags.VERTICAL | Gtk.EventControllerScrollFlags.DISCRETE);
+        controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE);
+        controller.connect('scroll', (controller, _dx, dy) => {
+            if (!this.editing || dy === 0)
+                return Gdk.EVENT_PROPAGATE;
+
+            const mods = controller.get_current_event_state() & Gtk.accelerator_get_default_mod_mask();
+            const keyval = dy < 0 ? MOUSE_SCROLL_UP : MOUSE_SCROLL_DOWN;
+            this._updateKeybinding(new Combo({ keyval, mods }, this.acceleratorParse));
+            return Gdk.EVENT_STOP;
         });
         this.add_controller(controller);
 
@@ -830,10 +856,18 @@ const ComboRow = GObject.registerClass({
             this._ungrabKeyboard();
 
             if (this._combo && !this._combo.disabled) {
-                this._shortcutLabel.accelerator = this._combo.keystr;
+                const scroll = scrollKeyName(this._combo.keyval) !== null;
+                this._shortcutLabel.visible = !scroll;
+                this._scrollLabel.visible = scroll;
+                if (scroll)
+                    this._scrollLabel.label = this._combo.label;
+                else
+                    this._shortcutLabel.accelerator = this._combo.keystr;
                 this._deleteButton.visible = true;
                 this._conflictButton.visible = this.collisions.length > 0;
             } else {
+                this._shortcutLabel.visible = true;
+                this._scrollLabel.visible = false;
                 this._shortcutLabel.accelerator = '';
                 this._deleteButton.visible = false;
             }

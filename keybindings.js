@@ -1,9 +1,11 @@
 import Clutter from 'gi://Clutter';
+import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import { MOUSE_SCROLL_UP, MOUSE_SCROLL_DOWN, isScrollBinding } from './acceleratorparse.js';
 
 import {
     Settings, Utils, Tiling, Navigator,
@@ -15,13 +17,51 @@ const display = global.display;
 
 const KEYBINDINGS_KEY = 'org.gnome.shell.extensions.paperwm.keybindings';
 
-let keybindSettings;
+let keybindSettings, keyboardSettings, scrollBindings;
+// Ignore Caps Lock, Num Lock and pointer-button state when matching shortcuts.
+const SCROLL_MODIFIER_MASK = 0xff & ~(Clutter.ModifierType.LOCK_MASK | Clutter.ModifierType.MOD2_MASK);
+
+function scrollMaskOfKeystr(keystr) {
+    const [, , virtualMask] = Settings.accelerator_parse(keystr);
+    if (Seat.get_keymap().map_virtual_modifiers)
+        return devirtualizeMask(virtualMask) & SCROLL_MODIFIER_MASK;
+
+    // GNOME 50 removed the public keymap translator, but events still carry
+    // raw XKB masks. The compositor exposes its resolved window-action mask.
+    let mask = virtualMask;
+    const compositorMask = Meta.prefs_get_mouse_button_mods();
+    if (compositorMask && (mask & compositorMask) === compositorMask)
+        mask = (mask & ~compositorMask) | display.get_compositor_modifiers();
+    // Standard XKB aliases for modifiers outside the window-action binding.
+    if (mask & Clutter.ModifierType.SUPER_MASK)
+        mask |= Clutter.ModifierType.MOD4_MASK;
+    if (mask & Clutter.ModifierType.HYPER_MASK)
+        mask |= Clutter.ModifierType.MOD4_MASK;
+    if (mask & Clutter.ModifierType.META_MASK)
+        mask |= Clutter.ModifierType.MOD1_MASK;
+    return mask & SCROLL_MODIFIER_MASK;
+}
+
 export function enable(extension) {
     // restore previous keybinds (in case failed to restore last time, e.g. gnome crash etc)
     Settings.updateOverrides();
 
     keybindSettings = extension.getSettings(KEYBINDINGS_KEY);
+    // Mutter only understands keyboard accelerators. Mirror those into a private
+    // backend so wheel shortcuts can share the existing settings string arrays.
+    keyboardSettings = new Gio.Settings({
+        settings_schema: keybindSettings.settings_schema,
+        backend: Gio.memory_settings_backend_new(),
+    });
+    keybindSettings.list_keys().forEach(updateKeyboardBinding);
     setupActions(keybindSettings);
+    rebuildScrollBindings();
+    signals.connect(keybindSettings, 'changed', (_settings, key) => {
+        updateKeyboardBinding(key);
+        rebuildScrollBindings();
+    });
+    signals.connect(global.stage, 'captured-event', (_stage, event) => handleScrollEvent(event));
+    signals.connect(display, 'notify::compositor-modifiers', () => rebuildScrollBindings());
     signals.connect(display, 'accelerator-activated', (display, actionId, deviceId, timestamp) => {
         handleAccelerator(display, actionId, deviceId, timestamp);
     });
@@ -50,10 +90,79 @@ export function disable() {
     Settings.restoreConflicts();
 
     keybindSettings = null;
+    keyboardSettings = null;
+    scrollBindings = null;
     actions = null;
     nameMap = null;
     actionIdMap = null;
     keycomboMap = null;
+}
+
+function updateKeyboardBinding(key) {
+    keyboardSettings.set_strv(key, keybindSettings.get_strv(key).filter(keystr => !isScrollBinding(keystr)));
+}
+
+function rebuildScrollBindings() {
+    scrollBindings = new Map();
+    for (const action of actions) {
+        if (action.options.settings !== keybindSettings)
+            continue;
+        for (const keystr of keybindSettings.get_strv(action.name)) {
+            if (!isScrollBinding(keystr))
+                continue;
+            const [, keyval] = Settings.accelerator_parse(keystr);
+            const mask = scrollMaskOfKeystr(keystr);
+            const combo = `${keyval}|${mask}`;
+            // Conflicts are shown in preferences; only dispatch one action.
+            if (!scrollBindings.has(combo))
+                scrollBindings.set(combo, { action, mask });
+        }
+    }
+}
+
+export function handleScrollEvent(event) {
+    const allowedMode = (Main.actionMode & Shell.ActionMode.NORMAL) !== 0 ||
+        (Navigator.navigating && Main.actionMode === Shell.ActionMode.NONE);
+    if (event.type() !== Clutter.EventType.SCROLL ||
+        !allowedMode)
+        return Clutter.EVENT_PROPAGATE;
+
+    let keyval;
+    switch (event.get_scroll_direction()) {
+    case Clutter.ScrollDirection.UP:
+        keyval = MOUSE_SCROLL_UP;
+        break;
+    case Clutter.ScrollDirection.DOWN:
+        keyval = MOUSE_SCROLL_DOWN;
+        break;
+    default:
+        // Discrete wheel steps only: do not also dispatch their smooth events,
+        // or turn ordinary two-finger touchpad scrolling into wheel shortcuts.
+        return Clutter.EVENT_PROPAGATE;
+    }
+
+    const mask = event.get_state() & SCROLL_MODIFIER_MASK;
+    const match = scrollBindings.get(`${keyval}|${mask}`);
+    if (!match)
+        return Clutter.EVENT_PROPAGATE;
+
+    const { action } = match;
+    const space = Tiling.spaces.selectedSpace;
+    const metaWindow = space.selectedWindow;
+    if (!metaWindow && (action.options.mutterFlags & Meta.KeyBindingFlags.PER_WINDOW))
+        return Clutter.EVENT_STOP;
+
+    const binding = {
+        get_name: () => action.name,
+        get_mask: () => mask,
+        is_reversed: () => !!(action.options.mutterFlags & Meta.KeyBindingFlags.IS_REVERSED),
+    };
+    if (action.options.opensNavigator || Navigator.navigating) {
+        Navigator.preview_navigate(metaWindow, space, { display, binding, action });
+    } else {
+        action.handler(metaWindow, space, { display, binding });
+    }
+    return Clutter.EVENT_STOP;
 }
 
 export function registerPaperAction(actionName, handler, flags) {
@@ -631,7 +740,7 @@ export function enableAction(action) {
     if (action.options.settings) {
         let actionId = Main.wm.addKeybinding(
             action.mutterName,
-            action.options.settings,
+            action.options.settings === keybindSettings ? keyboardSettings : action.options.settings,
             action.options.mutterFlags || Meta.KeyBindingFlags.NONE,
             Shell.ActionMode.NORMAL,
             action.keyHandler);

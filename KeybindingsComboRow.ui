@@ -22,6 +22,12 @@
                 </child>
 
                 <child>
+                  <object class="GtkLabel" id="scrollLabel">
+                    <property name="visible">False</property>
+                  </object>
+                </child>
+
+                <child>
                   <object class="GtkMenuButton" id="conflictButton">
                     <property name="tooltip_text" translatable="yes">Conflicts</property>
                     <property name="icon_name">dialog-error-symbolic</property>
@@ -69,7 +75,7 @@
             <property name="child">
               <object class="GtkLabel" id="editPage">
                 <property name="use_markup">True</property>
-                <property name="label" translatable="yes">Enter keyboard shortcut, &lt;b&gt;Backspace&lt;/b&gt; to delete or &lt;b&gt;Esc&lt;/b&gt; to cancel</property>
+                <property name="label" translatable="yes">Press a key or scroll up/down, &lt;b&gt;Backspace&lt;/b&gt; to delete or &lt;b&gt;Esc&lt;/b&gt; to cancel</property>
               </object>
             </property>
           </object>

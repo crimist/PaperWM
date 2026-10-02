@@ -90,6 +90,8 @@ class ActionDispatcher {
 
         this.signals.connect(this.actor, 'key-press-event', this._keyPressEvent.bind(this));
         this.signals.connect(this.actor, 'key-release-event', this._keyReleaseEvent.bind(this));
+        // A modal grab delivers events to its actor without traversing the stage.
+        this.signals.connect(this.actor, 'captured-event', (_actor, event) => Keybindings.handleScrollEvent(event));
 
         this.keyPressCallbacks = [];
         this.keyReleaseCallbacks = [];
@@ -116,12 +118,12 @@ class ActionDispatcher {
         return this;
     }
 
-    show(_backward, binding, mask) {
+    show(_backward, binding, mask, action = null) {
         this._modifierMask = primaryModifier(mask);
         this.navigator = getNavigator();
         Topbar.fixTopBar();
         let actionId = Keybindings.idOf(binding);
-        if (actionId === Meta.KeyBindingAction.NONE) {
+        if (!action && actionId === Meta.KeyBindingAction.NONE) {
             try {
                 // Check for built-in actions
                 actionId = Meta.prefs_get_keybinding_action(binding);
@@ -131,7 +133,7 @@ class ActionDispatcher {
             }
         }
 
-        this._doAction(actionId);
+        this._doAction(actionId, action ?? Keybindings.byId(actionId));
 
         // There's a race condition; if the user released Alt before
         // we got the grab, then we won't be notified. (See
@@ -213,8 +215,7 @@ class ActionDispatcher {
         return Clutter.EVENT_STOP;
     }
 
-    _doAction(mutterActionId) {
-        let action = Keybindings.byId(mutterActionId);
+    _doAction(mutterActionId, action = Keybindings.byId(mutterActionId)) {
         let space = Tiling.spaces.selectedSpace;
         let metaWindow = space.selectedWindow;
         const nav = getNavigator();
@@ -542,7 +543,7 @@ export function dismissDispatcher(mode) {
     }
 }
 
-export function preview_navigate(meta_window, space, { _display, _screen, binding }) {
+export function preview_navigate(meta_window, space, { _display, _screen, binding, action }) {
     let tabPopup = getActionDispatcher(DispatcherMode.KEYBOARD);
-    tabPopup.show(binding.is_reversed(), binding.get_name(), binding.get_mask());
+    tabPopup.show(binding.is_reversed(), binding.get_name(), binding.get_mask(), action);
 }

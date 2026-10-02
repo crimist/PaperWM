@@ -64,6 +64,12 @@ export async function run() {
         'Smooth events do not double-dispatch discrete wheel steps');
     assert(Keybindings.handleScrollEvent(event(Clutter.ScrollDirection.LEFT)) === Clutter.EVENT_PROPAGATE,
         'Horizontal scrolling is unaffected');
+    settings.set_strv('switch-up-workspace', ['MouseScrollUp']);
+    await wait();
+    assert(Keybindings.handleScrollEvent(event(Clutter.ScrollDirection.UP, 0)) === Clutter.EVENT_PROPAGATE,
+        'Even a stored bare-wheel binding leaves ordinary scrolling alone');
+    settings.set_strv('switch-up-workspace', ['<Super>Page_Up', '<Super>MouseScrollUp']);
+    await wait();
 
     const keyboard = seat.create_virtual_device(Clutter.InputDeviceType.KEYBOARD_DEVICE);
     const pointer = seat.create_virtual_device(Clutter.InputDeviceType.POINTER_DEVICE);

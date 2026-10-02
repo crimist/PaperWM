@@ -73,9 +73,28 @@
         <child>
           <object class="GtkStackPage">
             <property name="child">
-              <object class="GtkLabel" id="editPage">
-                <property name="use_markup">True</property>
-                <property name="label" translatable="yes">Press a key or scroll up/down, &lt;b&gt;Backspace&lt;/b&gt; to delete or &lt;b&gt;Esc&lt;/b&gt; to cancel</property>
+              <object class="GtkBox" id="editPage">
+                <property name="orientation">vertical</property>
+                <property name="spacing">6</property>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="wrap">True</property>
+                    <property name="use_markup">True</property>
+                    <property name="label" translatable="yes">Press a key or hold modifiers and scroll. &lt;b&gt;Backspace&lt;/b&gt; deletes; &lt;b&gt;Esc&lt;/b&gt; cancels.</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkLabel">
+                    <property name="wrap">True</property>
+                    <property name="label" translatable="yes">Or choose wheel modifiers and a direction below (works with PaperWM disabled):</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkBox" id="wheelControls">
+                    <property name="spacing">6</property>
+                    <property name="halign">center</property>
+                  </object>
+                </child>
               </object>
             </property>
           </object>

@@ -6,6 +6,7 @@ import Shell from 'gi://Shell';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { MOUSE_SCROLL_UP, MOUSE_SCROLL_DOWN, isScrollBinding } from './acceleratorparse.js';
+import { ScrollCaptureService } from './scrollcapture.js';
 
 import {
     Settings, Utils, Tiling, Navigator,
@@ -17,7 +18,7 @@ const display = global.display;
 
 const KEYBINDINGS_KEY = 'org.gnome.shell.extensions.paperwm.keybindings';
 
-let keybindSettings, keyboardSettings, scrollBindings;
+let keybindSettings, keyboardSettings, scrollBindings, scrollCapture;
 // Ignore Caps Lock, Num Lock and pointer-button state when matching shortcuts.
 const SCROLL_MODIFIER_MASK = 0xff & ~(Clutter.ModifierType.LOCK_MASK | Clutter.ModifierType.MOD2_MASK);
 
@@ -56,6 +57,7 @@ export function enable(extension) {
     keybindSettings.list_keys().forEach(updateKeyboardBinding);
     setupActions(keybindSettings);
     rebuildScrollBindings();
+    scrollCapture = new ScrollCaptureService(() => display.focus_window?.get_pid());
     signals.connect(keybindSettings, 'changed', (_settings, key) => {
         updateKeyboardBinding(key);
         rebuildScrollBindings();
@@ -82,6 +84,8 @@ export function enable(extension) {
 }
 
 export function disable() {
+    scrollCapture?.destroy();
+    scrollCapture = null;
     Utils.timeout_remove(pendingMonitorMove);
     pendingMonitorMove = null;
     signals.destroy();
@@ -112,6 +116,8 @@ function rebuildScrollBindings() {
                 continue;
             const [, keyval] = Settings.accelerator_parse(keystr);
             const mask = scrollMaskOfKeystr(keystr);
+            if (!mask)
+                continue;
             const combo = `${keyval}|${mask}`;
             // Conflicts are shown in preferences; only dispatch one action.
             if (!scrollBindings.has(combo))
@@ -142,6 +148,19 @@ export function handleScrollEvent(event) {
     }
 
     const mask = event.get_state() & SCROLL_MODIFIER_MASK;
+    if (!mask)
+        return Clutter.EVENT_PROPAGATE;
+
+    // Convert the raw XKB modifiers into GTK's virtual modifier bits.
+    let mods = mask;
+    const compositorMask = display.get_compositor_modifiers();
+    if (compositorMask && (mods & compositorMask) === compositorMask)
+        mods = (mods & ~compositorMask) | Meta.prefs_get_mouse_button_mods();
+    if (mods & Clutter.ModifierType.MOD4_MASK)
+        mods = (mods & ~Clutter.ModifierType.MOD4_MASK) | Clutter.ModifierType.SUPER_MASK;
+    if (scrollCapture?.forward(keyval === MOUSE_SCROLL_UP ? -1 : 1, mods))
+        return Clutter.EVENT_STOP;
+
     const match = scrollBindings.get(`${keyval}|${mask}`);
     if (!match)
         return Clutter.EVENT_PROPAGATE;

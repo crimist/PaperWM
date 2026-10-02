@@ -19,7 +19,8 @@ export default class WheelTest extends Extension {
         this.timer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 2000, () => {
             this.timer = null;
             const dir = GLib.getenv('PAPERWM_TEST_DIR');
-            const file = Gio.File.new_for_path(`${dir}/data/gnome-shell/extensions/paperwm@paperwm.github.com/tests/shell-scroll.js`);
+            const moduleName = GLib.getenv('PAPERWM_TEST_MODULE');
+            const file = Gio.File.new_for_path(`${dir}/data/gnome-shell/extensions/paperwm@paperwm.github.com/tests/${moduleName}`);
             import(file.get_uri())
                 .then(module => module.run())
                 .catch(error => GLib.file_set_contents(`${dir}/result`, `FAIL: ${error.message}\n${error.stack}`))
@@ -35,6 +36,7 @@ export default class WheelTest extends Extension {
 EOF
 timeout 45s dbus-run-session -- env \
     PAPERWM_TEST_DIR="$test_dir" \
+    PAPERWM_TEST_MODULE="${PAPERWM_TEST_MODULE:-shell-scroll.js}" \
     XDG_RUNTIME_DIR="$test_dir/runtime" \
     XDG_CONFIG_HOME="$test_dir/config" \
     XDG_DATA_HOME="$test_dir/data" \

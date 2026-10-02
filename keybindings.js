@@ -1,4 +1,5 @@
 import Clutter from 'gi://Clutter';
+import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 
@@ -41,6 +42,8 @@ export function enable(extension) {
 }
 
 export function disable() {
+    Utils.timeout_remove(pendingMonitorMove);
+    pendingMonitorMove = null;
     signals.destroy();
     signals = null;
     actions.forEach(disableAction);
@@ -82,6 +85,60 @@ export function registerMinimapAction(name, handler) {
 
 
 let signals, actions, nameMap, actionIdMap, keycomboMap;
+let pendingMonitorMove = null;
+
+function moveWindowOrMonitor(metaWindow, space, direction) {
+    const position = space.positionOf(metaWindow);
+    if (!position)
+        return;
+    const [index, row] = position;
+    if (index < 0 || row < 0 || pendingMonitorMove !== null)
+        return;
+
+    let atEdge, monitorDirection;
+    switch (direction) {
+    case Meta.MotionDirection.LEFT:
+        atEdge = index === 0;
+        monitorDirection = Meta.DisplayDirection.LEFT;
+        break;
+    case Meta.MotionDirection.RIGHT:
+        atEdge = index === space.length - 1;
+        monitorDirection = Meta.DisplayDirection.RIGHT;
+        break;
+    case Meta.MotionDirection.UP:
+        atEdge = row === 0;
+        monitorDirection = Meta.DisplayDirection.UP;
+        break;
+    case Meta.MotionDirection.DOWN:
+        atEdge = row === space[index].length - 1;
+        monitorDirection = Meta.DisplayDirection.DOWN;
+        break;
+    default:
+        return;
+    }
+
+    if (!atEdge) {
+        space.swap(direction, metaWindow);
+        return;
+    }
+    if (Tiling.inGrab ||
+        display.get_monitor_neighbor_index(space.monitor.index, monitorDirection) === -1)
+        return;
+
+    // Finish the key event before releasing the navigator's keyboard grab.
+    pendingMonitorMove = GLib.idle_add(GLib.PRIORITY_DEFAULT, () => {
+        pendingMonitorMove = null;
+        if (!metaWindow.get_compositor_private() ||
+            Tiling.spaces.spaceOfWindow(metaWindow) !== space)
+            return GLib.SOURCE_REMOVE;
+
+        Navigator.finishDispatching();
+        // Navigation can select a window other than the currently focused one.
+        space.activateWithFocus(metaWindow, false, false);
+        Tiling.spaces.switchMonitor(monitorDirection, true);
+        return GLib.SOURCE_REMOVE;
+    });
+}
 export function setupActions(settings) {
     signals = new Utils.Signals();
     actions = [];
@@ -228,13 +285,13 @@ export function setupActions(settings) {
     registerMinimapAction("switch-global-down", (mw, space) => space.switchGlobalDown());
 
     registerMinimapAction("move-left",
-        (_mw, space) => space.swap(Meta.MotionDirection.LEFT));
+        (mw, space) => moveWindowOrMonitor(mw, space, Meta.MotionDirection.LEFT));
     registerMinimapAction("move-right",
-        (_mw, space) => space.swap(Meta.MotionDirection.RIGHT));
+        (mw, space) => moveWindowOrMonitor(mw, space, Meta.MotionDirection.RIGHT));
     registerMinimapAction("move-up",
-        (_mw, space) => space.swap(Meta.MotionDirection.UP));
+        (mw, space) => moveWindowOrMonitor(mw, space, Meta.MotionDirection.UP));
     registerMinimapAction("move-down",
-        (_mw, space) => space.swap(Meta.MotionDirection.DOWN));
+        (mw, space) => moveWindowOrMonitor(mw, space, Meta.MotionDirection.DOWN));
 
     registerPaperAction("toggle-scratch-window",
         Scratch.toggleScratchWindow);

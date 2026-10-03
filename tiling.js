@@ -3489,6 +3489,8 @@ export function registerWindow(metaWindow) {
         focus_handler(metaWindow, user_data);
     });
     signals.connect(metaWindow, 'size-changed', allocateClone);
+    // Buffer offsets can change with decorations even when frame size does not.
+    signals.connect(metaWindow, 'position-changed', allocateClone);
     // Note: runs before gnome-shell's minimize handling code
     signals.connect(metaWindow, 'notify::fullscreen', () => {
         // if window is in a column, expel it
@@ -3511,6 +3513,17 @@ export function registerWindow(metaWindow) {
         }
 
         spaces.spaceOfWindow(metaWindow)?.setSpaceTopbarElementsVisible(true);
+
+        // Fullscreen can remove window decorations without changing the frame
+        // size. Refresh the clone and monitor clip even without size-changed.
+        Utils.later_add(Meta.LaterType.RESIZE, () => {
+            if (!metaWindow.get_compositor_private() || !metaWindow.clone ||
+                !spaces?.spaceOfWindow(metaWindow)) {
+                return;
+            }
+            allocateClone(metaWindow);
+            resizeHandler(metaWindow);
+        });
     });
     signals.connect(metaWindow, 'notify::minimized', metaWindow => {
         minimizeHandler(metaWindow);
